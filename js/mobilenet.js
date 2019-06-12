@@ -1,0 +1,101 @@
+let fs = require('fs');
+let Redis = require('ioredis');
+let Jimp = require('jimp');
+
+function argmax(arr, start, end) {
+  start = start | 0;
+  end = end | arr.length;
+  let index = 0;
+  let value = arr[index];
+  for (let i=start; i<end; i++) {
+    if (arr[i] > value) {
+      value = arr[i];
+      index = i;
+    }
+  }
+  return index;
+}
+
+function normalize_rgb(buffer) {
+  let npixels = buffer.length / 4;
+  let out = new Float32Array(npixels * 3);
+  for (let i=0; i<npixels; i++) {
+    out[3*i]   = buffer[4*i]   / 128 - 1;
+    out[3*i+1] = buffer[4*i+1] / 128 - 1;
+    out[3*i+2] = buffer[4*i+2] / 128 - 1;
+  }
+  return out;
+}
+
+function buffer_to_float32array(buffer) {
+  let out_array = new Float32Array(buffer.length / 4);
+  for (let i=0; i<out_array.length; i++) {
+    out_array[i] = buffer.readFloatLE(4*i);
+  }
+  return out_array;
+}
+
+let answerSet = [];
+async function run(filenames) {
+
+  let json_labels = fs.readFileSync("imagenet_class_index.json");
+  let labels = JSON.parse(json_labels);
+
+  let redis = new Redis({ parser: 'javascript' });
+
+  const model_filename = '../models/mobilenet_v2_1.4_224_frozen.pb';
+  const input_var = 'input';
+  const output_var = 'MobilenetV2/Predictions/Reshape_1';
+
+  const buffer = fs.readFileSync(model_filename, {'flag': 'r'});
+
+  console.log("Setting model");
+  redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, buffer);
+
+  const image_height = 224;
+  const image_width = 224;
+   let p = 0;
+
+  for (i in filenames) {
+
+    console.log("Reading image");
+    let input_image = await Jimp.read(filenames[i]);
+
+    let image = input_image.cover(image_width, image_height);
+    let normalized = normalize_rgb(image.bitmap.data, image.hasAlpha());
+
+    let buffer = Buffer.from(normalized.buffer);
+
+    console.log("Setting input tensor");
+    redis.call('AI.TENSORSET', 'input_' + i,
+                     'FLOAT', 1, image_width, image_height, 3,
+                     'BLOB', buffer);
+
+    console.log("Running model");
+    redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', 'input_' + i, 'OUTPUTS', 'output_' + i);
+
+    console.log("Getting output tensor");
+    let out_data = await redis.callBuffer('AI.TENSORGET', 'output_' + i, 'BLOB');
+    let out_array = buffer_to_float32array(out_data[out_data.length - 1]);
+
+    label = argmax(out_array);
+
+      answerSet.push({
+         'filename': filenames[i],
+         'matches':  labels[label-1][1]
+      });
+      p++;
+      if (p === filenames.length) {
+         console.log("\n...OK I think I got something...\n");
+         console.table(answerSet, ['filename', 'matches']);
+
+      }
+  }
+
+
+}
+
+let filenames = Array.from(process.argv)
+filenames.splice(0, 2);
+
+run(filenames);
