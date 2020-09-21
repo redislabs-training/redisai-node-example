@@ -50,7 +50,7 @@ async function run(filenames) {
   const buffer = fs.readFileSync(model_filename, {'flag': 'r'});
 
   console.log("Setting model");
-  redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, buffer);
+  await redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, "BLOB", buffer);
 
   const image_height = 224;
   const image_width = 224;
@@ -67,32 +67,30 @@ async function run(filenames) {
     let buffer = Buffer.from(normalized.buffer);
 
     console.log("Setting input tensor");
-    redis.call('AI.TENSORSET', 'input_' + i,
+    await redis.call('AI.TENSORSET', 'input_' + i,
                      'FLOAT', 1, image_width, image_height, 3,
                      'BLOB', buffer);
 
     console.log("Running model");
-    redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', 'input_' + i, 'OUTPUTS', 'output_' + i);
-
-    console.log("Getting output tensor");
+    await redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', 'input_' + i, 'OUTPUTS', 'output_' + i);
     let out_data = await redis.callBuffer('AI.TENSORGET', 'output_' + i, 'BLOB');
-    let out_array = buffer_to_float32array(out_data[out_data.length - 1]);
+    let out_array = buffer_to_float32array(out_data);
 
     label = argmax(out_array);
 
-      answerSet.push({
-         'filename': filenames[i],
-         'matches':  labels[label-1][1]
-      });
-      p++;
-      if (p === filenames.length) {
-         console.log("\n...OK I think I got something...\n");
-         console.table(answerSet, ['filename', 'matches']);
+    answerSet.push({
+        'filename': filenames[i],
+        'matches':  labels[label-1][1]
+    });
+    p++;
+    if (p === filenames.length) {
+        console.log("\n...OK I think I got something...\n");
+        console.table(answerSet, ['filename', 'matches']);
 
-      }
+    }
   }
 
-
+  redis.quit()
 }
 
 let filenames = Array.from(process.argv)
