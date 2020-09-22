@@ -1,101 +1,114 @@
-let fs = require('fs');
-let Redis = require('ioredis');
-let Jimp = require('jimp');
+let fs = require('fs').promises
 
-function argmax(arr, start, end) {
-  start = start | 0;
-  end = end | arr.length;
-  let index = 0;
-  let value = arr[index];
-  for (let i=start; i<end; i++) {
-    if (arr[i] > value) {
-      value = arr[i];
-      index = i;
-    }
-  }
-  return index;
-}
+let Redis = require('ioredis')
+let Jimp = require('jimp')
 
-function normalize_rgb(buffer) {
-  let npixels = buffer.length / 4;
-  let out = new Float32Array(npixels * 3);
-  for (let i=0; i<npixels; i++) {
-    out[3*i]   = buffer[4*i]   / 127.5 - 1;
-    out[3*i+1] = buffer[4*i+1] / 127.5 - 1;
-    out[3*i+2] = buffer[4*i+2] / 127.5 - 1;
-  }
-  return out;
-}
+const MODEL_PATH = '../models/mobilenet_v2_1.4_224_frozen.pb'
+const MODEL_INPUT_NODES_NAME = 'input'
+const MODEL_OUTPUT_NODES_NAME = 'MobilenetV2/Predictions/Reshape_1'
 
-function buffer_to_float32array(buffer) {
-  let out_array = new Float32Array(buffer.length / 4);
-  for (let i=0; i<out_array.length; i++) {
-    out_array[i] = buffer.readFloatLE(4*i);
-  }
-  return out_array;
-}
+const LABELS_PATH = 'labels.json'
 
-let answerSet = [];
-async function run(filenames) {
+const MODEL_REDIS_KEY = 'mobilenet'
 
-  let json_labels = fs.readFileSync("imagenet_class_index.json");
-  let labels = JSON.parse(json_labels);
+const IMAGE_HEIGHT = 224
+const IMAGE_WIDTH = 224
 
-  let redis = new Redis({ parser: 'javascript' });
+const TOP_COUNT = 3
 
-  const model_filename = '../models/mobilenet_v2_1.4_224_frozen.pb';
-  const input_var = 'input';
-  const output_var = 'MobilenetV2/Predictions/Reshape_1';
+async function main() {
 
-  const buffer = fs.readFileSync(model_filename, {'flag': 'r'});
+  // extract filenames from command line
+  let [, , ...filenames] = Array.from(process.argv)
 
-  console.log("Setting model");
-  await redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, 'BLOB', buffer);
+  // read the labels from the json
+  let labels = JSON.parse(await fs.readFile(LABELS_PATH))
 
-  const image_height = 224;
-  const image_width = 224;
-   let p = 0;
+  // open redis
+  let redis = new Redis()
 
-  for (i in filenames) {
+  // read and set the model
+  let modelBlob = await fs.readFile(MODEL_PATH)
 
-    console.log("Reading image");
-    let input_image = await Jimp.read(filenames[i]);
+  console.log("Setting the model to", MODEL_REDIS_KEY)
+  await redis.call('AI.MODELSET', MODEL_REDIS_KEY, 'TF', 'CPU',
+    'INPUTS', MODEL_INPUT_NODES_NAME,
+    'OUTPUTS', MODEL_OUTPUT_NODES_NAME,
+    'BLOB', modelBlob)
 
-    let image = input_image.cover(image_width, image_height);
-    let normalized = normalize_rgb(image.bitmap.data, image.hasAlpha());
+  // classify all the files
+  let classifications = await Promise.all(
+    
+    filenames.map(async (filename, index) => {
 
-    let buffer = Buffer.from(normalized.buffer);
+      // load and resize image
+      console.log("Reading and resizing", filename)
+      let image = await Jimp.read(filename)
+      let resizedImage = image.cover(IMAGE_WIDTH, IMAGE_HEIGHT)
+      let imageBytes = Array.from(resizedImage.bitmap.data)
 
-    console.log("Setting input tensor");
-    await redis.call('AI.TENSORSET', 'input_' + i,
-                     'FLOAT', 1, image_width, image_height, 3,
-                     'BLOB', buffer);
+      // normalize image data
+      console.log("Normalizing image data")
+      let imageColorBytes = removeAlpha(imageBytes)
+      let normalizedImageFloats = normalizeRgb(imageColorBytes)
+      let imageBuffer = Buffer.from(normalizedImageFloats.buffer)
 
-    console.log("Running model");
-    await redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', 'input_' + i, 'OUTPUTS', 'output_' + i);
-    let out_data = await redis.callBuffer('AI.TENSORGET', 'output_' + i, 'BLOB');
-    let out_array = buffer_to_float32array(out_data);
+      // keys for the input and output tensors
+      let inputKey = 'input_' + index
+      let outputKey = 'output_' + index
 
-    label = argmax(out_array);
+      // place normalized image in input tensor
+      let shape = [1, IMAGE_WIDTH, IMAGE_HEIGHT, 3]
+      console.log("Setting input tensor of shape", shape)
+      await redis.call('AI.TENSORSET', inputKey,
+                      'FLOAT', ...shape,
+                      'BLOB', imageBuffer)
 
-    console.log("Label:", label, "Zero", out_array[0])
+      // infer
+      console.log("Running model")
+      await redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', inputKey, 'OUTPUTS', outputKey)
 
-    answerSet.push({
-        'filename': filenames[i],
-        'matches':  labels[label-1][1]
-    });
-    p++;
-    if (p === filenames.length) {
-        console.log("\n...OK I think I got something...\n");
-        console.table(answerSet, ['filename', 'matches']);
+      // read the output tensor
+      console.log("Reading output tensor")
+      let outputBuffer = await redis.callBuffer('AI.TENSORGET', outputKey, 'BLOB')
+      let encodedOutput = bufferToFloatArray(outputBuffer)
 
-    }
-  }
+      // decode the classifications
+      console.log("Decoding results")
+      let decodedOutput = encodedOutput.map((score, index) => {
+        return { label: labels[index], score }
+      })
+
+      // report the top result
+      return decodedOutput
+        .sort((a, b) => b.score - a.score)
+        .slice(0, TOP_COUNT)
+        .map(result => { return { filename, label: result.label, score: result.score } })
+    })
+  )
+
+  console.table(classifications.flat(1))
 
   redis.quit()
 }
 
-let filenames = Array.from(process.argv)
-filenames.splice(0, 2);
+function removeAlpha(data) {
+  // Image data includes RGB and the alpha channel, giving 4 bytes
+  // per pixel. We only care about the RGB so drop every fourth byte.
+  return data.filter((byte, index) => (index + 1) % 4 !== 0)
+}
 
-run(filenames);
+function normalizeRgb(data) {
+  // scale the rgb from 0 through 255 to -1.0 throuh +1.0
+  return Float32Array.from(data.map(byte => byte / 127.5 - 1))
+}
+
+function bufferToFloatArray(buffer) {
+  // Each float is 4-bytes so make a new array, fill it with nothing,
+  // and map the nothing to the results of reading the buffer.
+  return new Array(buffer.length / 4)
+    .fill()
+    .map((_, index) => buffer.readFloatLE(4 * index))
+}
+
+main()
