@@ -20,9 +20,9 @@ function normalize_rgb(buffer) {
   let npixels = buffer.length / 4;
   let out = new Float32Array(npixels * 3);
   for (let i=0; i<npixels; i++) {
-    out[3*i]   = buffer[4*i]   / 128 - 1;
-    out[3*i+1] = buffer[4*i+1] / 128 - 1;
-    out[3*i+2] = buffer[4*i+2] / 128 - 1;
+    out[3*i]   = buffer[4*i]   / 127.5 - 1;
+    out[3*i+1] = buffer[4*i+1] / 127.5 - 1;
+    out[3*i+2] = buffer[4*i+2] / 127.5 - 1;
   }
   return out;
 }
@@ -50,7 +50,7 @@ async function run(filenames) {
   const buffer = fs.readFileSync(model_filename, {'flag': 'r'});
 
   console.log("Setting model");
-  await redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, "BLOB", buffer);
+  await redis.call('AI.MODELSET', 'mobilenet', 'TF', 'CPU', 'INPUTS', input_var, 'OUTPUTS', output_var, 'BLOB', buffer);
 
   const image_height = 224;
   const image_width = 224;
@@ -77,6 +77,8 @@ async function run(filenames) {
     let out_array = buffer_to_float32array(out_data);
 
     label = argmax(out_array);
+
+    console.log("Label:", label, "Zero", out_array[0])
 
     answerSet.push({
         'filename': filenames[i],
