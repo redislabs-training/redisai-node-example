@@ -68,9 +68,11 @@ async function main() {
   let topOutput = decodeAndRankOutput(outputArray, labels)
 
   // report the results
+  console.log()
   topOutput.forEach((row, index) => {
     console.table(row)
     console.log(imagePaths[index])
+    console.log()
   })
 
   // close up redis

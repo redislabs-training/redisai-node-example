@@ -4,29 +4,32 @@ This tool loads a Mobilenet image classification model into RedisAI, takes a bun
 
 ## Installation
 
-Make sure you have Node installed and then clone this repo.
+1. First and foremost, you need to have Redis and RedisAI installed. You can build this all from source, but I find it a lot easier to just use Docker. In the root of this project, I have a `start-redis.sh` file. It will download the needed image, make sure RedisAI is configured, and have you up and running in a jiffy (or is that giphy).
+
+    $ ./start-redis.sh
+
+2. Also, make sure you have Node installed. I like to use Node Version Manager but do it how you like.
+
+3. Clone this repo.
 
     $ git clone git@github.com:guyroyse/redisai-node-example.git
 
-Once you do, just `npm install` from the root of the repo. Everything you need to run the example is in the repo, including some images.
+4. Install all of the dependencies.
+
+    $ npm install
+
+5. There is no step, five. You're all set!
 
 ## Usage
 
-This is a simple CLI tool and there are already some images to play with in the `img` folder.
+This is a simple example that uses the CLI. Everythign you need should be included in the repo. The model is in the `model` folder. There are even some images to play with in the `img` folder.
 
-To classify an images, just run:
+To user the tool to classify an images, just run:
 
     $ npm start img/panda.jpg
 
 It'll return the top 5 most likely classes for the images, including their scores:
 
-    Setting the model to mobilenet
-    Reading and resizing img/panda.jpg
-    Normalizing image data
-    Setting input tensor of shape [ 1, 224, 224, 3 ]
-    Running model
-    Reading output tensor of shape [ 1, 1001 ]
-    Decoding results
     ┌─────────┬──────────────────────────────────┬───────────────────────┐
     │ (index) │              label               │         score         │
     ├─────────┼──────────────────────────────────┼───────────────────────┤
@@ -38,22 +41,10 @@ It'll return the top 5 most likely classes for the images, including their score
     └─────────┴──────────────────────────────────┴───────────────────────┘
     img/panda.jpg
 
-
 The CLI is variadic, so you can add multiple images as well:
 
     $ npm start img/panda.jpg img/sample_dog.jpg img/sample_computer.jpg
 
-    Setting the model to mobilenet
-    Reading and resizing img/panda.jpg
-    Reading and resizing img/sample_dog.jpg
-    Reading and resizing img/sample_computer.jpg
-    Normalizing image data
-    Normalizing image data
-    Normalizing image data
-    Setting input tensor of shape [ 3, 224, 224, 3 ]
-    Running model
-    Reading output tensor of shape [ 3, 1001 ]
-    Decoding results
     ┌─────────┬──────────────────────────────────┬───────────────────────┐
     │ (index) │              label               │         score         │
     ├─────────┼──────────────────────────────────┼───────────────────────┤
@@ -64,6 +55,7 @@ The CLI is variadic, so you can add multiple images as well:
     │    4    │             'badger'             │ 0.0011667292565107346 │
     └─────────┴──────────────────────────────────┴───────────────────────┘
     img/panda.jpg
+
     ┌─────────┬───────────────────┬─────────────────────┐
     │ (index) │       label       │        score        │
     ├─────────┼───────────────────┼─────────────────────┤
@@ -74,6 +66,7 @@ The CLI is variadic, so you can add multiple images as well:
     │    4    │ 'German shepherd' │ 0.00960743147879839 │
     └─────────┴───────────────────┴─────────────────────┘
     img/sample_dog.jpg
+
     ┌─────────┬─────────────────────┬─────────────────────┐
     │ (index) │        label        │        score        │
     ├─────────┼─────────────────────┼─────────────────────┤
@@ -93,13 +86,6 @@ And, it will even take a URL to an image, like this rando I grabbed off the Inte
 
 Apparently, I'm a fur coat.
 
-    Setting the model to mobilenet
-    Reading and resizing http://guyroyse.com/guy-royse-papis-global-2018.jpg
-    Normalizing image data
-    Setting input tensor of shape [ 1, 224, 224, 3 ]
-    Running model
-    Reading output tensor of shape [ 1, 1001 ]
-    Decoding results
     ┌─────────┬──────────────────────┬──────────────────────┐
     │ (index) │        label         │        score         │
     ├─────────┼──────────────────────┼──────────────────────┤
