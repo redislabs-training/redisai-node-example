@@ -3,7 +3,7 @@ let fs = require('fs').promises
 let Redis = require('ioredis')
 let Jimp = require('jimp')
 
-const MODEL_PATH = '../models/mobilenet_v2_1.4_224_frozen.pb'
+const MODEL_PATH = 'models/mobilenet_v2_1.4_224_frozen.pb'
 const MODEL_INPUT_NODES_NAME = 'input'
 const MODEL_OUTPUT_NODES_NAME = 'MobilenetV2/Predictions/Reshape_1'
 
@@ -63,7 +63,7 @@ async function main() {
   let outputBuffer = await redis.callBuffer('AI.TENSORGET', OUTPUT_TENSOR_KEY, 'BLOB')
   let outputArray = tensorToArrayOfFloats(outputBuffer, outputShape)
 
-  // decode the classifications
+  // decode and rank the classifications
   console.log("Decoding results")
   let topOutput = decodeAndRankOutput(outputArray, labels)
 
@@ -73,6 +73,7 @@ async function main() {
     console.log(imagePaths[index])
   })
 
+  // close up redis
   redis.quit()
 }
 

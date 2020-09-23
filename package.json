@@ -1,0 +1,15 @@
+{
+  "name": "redis_mobilenet",
+  "version": "1.0.0",
+  "contributors": [
+    "Joe Cianflone",
+    "Guy Royse <guy@guyroyse.com>"
+  ],
+  "scripts": {
+    "start": "node mobilenet.js"
+  },
+  "dependencies": {
+    "ioredis": "^4.17.3",
+    "jimp": "^0.16.1"
+  }
+}
