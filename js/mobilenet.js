@@ -9,41 +9,100 @@ const MODEL_OUTPUT_NODES_NAME = 'MobilenetV2/Predictions/Reshape_1'
 
 const LABELS_PATH = 'labels.json'
 
-const MODEL_REDIS_KEY = 'mobilenet'
+const MODEL_KEY = 'mobilenet'
+const INPUT_TENSOR_KEY = 'mobilenet_input'
+const OUTPUT_TENSOR_KEY = 'mobilenet_output'
 
 const IMAGE_HEIGHT = 224
 const IMAGE_WIDTH = 224
+const IMAGE_DEPTH = 3
 
-const TOP_COUNT = 3
+const TOP_COUNT = 5
 
 async function main() {
 
-  // extract filenames from command line
-  let [, , ...filenames] = Array.from(process.argv)
+  let imagePaths = fetchImagePaths()
+  let labels = await fetchLabels()
 
-  // read the labels from the json
-  let labels = JSON.parse(await fs.readFile(LABELS_PATH))
+  let imageCount = imagePaths.length
+  let labelCount = labels.length
 
-  // open redis
+  let inputShape = [imageCount, IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_DEPTH]
+  let outputShape = [imageCount, labelCount]
+
+  // connect to redis
   let redis = new Redis()
 
-  // read and set the model
-  let modelBlob = await fs.readFile(MODEL_PATH)
+  // read the model
+  let modelBlob = await fetchModel()
 
-  console.log("Setting the model to", MODEL_REDIS_KEY)
-  await redis.call('AI.MODELSET', MODEL_REDIS_KEY, 'TF', 'CPU',
+  // set the model
+  console.log("Setting the model to", MODEL_KEY)
+  await redis.call('AI.MODELSET', MODEL_KEY, 'TF', 'CPU',
     'INPUTS', MODEL_INPUT_NODES_NAME,
     'OUTPUTS', MODEL_OUTPUT_NODES_NAME,
     'BLOB', modelBlob)
 
-  // classify all the files
-  let classifications = await Promise.all(
-    
-    filenames.map(async (filename, index) => {
+  // fetch the image data
+  let imageData = await fetchImageData(imagePaths)
+
+  // place normalized image in input tensor
+  console.log("Setting input tensor of shape", inputShape)
+  await redis.call('AI.TENSORSET', INPUT_TENSOR_KEY,
+                   'FLOAT', ...inputShape,
+                   'BLOB', imageData)
+
+  // infer
+  console.log("Running model")
+  await redis.call('AI.MODELRUN', MODEL_KEY,
+                   'INPUTS', INPUT_TENSOR_KEY,
+                   'OUTPUTS', OUTPUT_TENSOR_KEY)
+
+  // read the output tensor
+  console.log("Reading output tensor of shape", outputShape)
+  let outputBuffer = await redis.callBuffer('AI.TENSORGET', OUTPUT_TENSOR_KEY, 'BLOB')
+  let encodedOutput = tensorToArrayOfFloats(outputBuffer, outputShape)
+
+  // decode the classifications
+  console.log("Decoding results")
+  let decodedTopOutput = encodedOutput.map((row, rowIndex) => {
+    return row
+      .map((score, index) => {
+        return { label: labels[index], score }
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_COUNT)
+      .map(result => { 
+        return { path: imagePaths[rowIndex], label: result.label, score: result.score }
+      })
+  })
+
+  decodedTopOutput.forEach(row => console.table(row))
+
+  redis.quit()
+}
+
+function fetchImagePaths() {
+  let [, , ...paths] = Array.from(process.argv)
+  return paths
+}
+
+async function fetchLabels() {
+  return JSON.parse(await fs.readFile(LABELS_PATH))
+}
+
+async function fetchModel() {
+  return await fs.readFile(MODEL_PATH)
+}
+
+async function fetchImageData(paths) {
+
+  let imageBuffers = await Promise.all(
+    await paths.map(async path => {
 
       // load and resize image
-      console.log("Reading and resizing", filename)
-      let image = await Jimp.read(filename)
+      console.log("Reading and resizing", path)
+      let image = await Jimp.read(path)
       let resizedImage = image.cover(IMAGE_WIDTH, IMAGE_HEIGHT)
       let imageBytes = Array.from(resizedImage.bitmap.data)
 
@@ -53,43 +112,12 @@ async function main() {
       let normalizedImageFloats = normalizeRgb(imageColorBytes)
       let imageBuffer = Buffer.from(normalizedImageFloats.buffer)
 
-      // keys for the input and output tensors
-      let inputKey = 'input_' + index
-      let outputKey = 'output_' + index
-
-      // place normalized image in input tensor
-      let shape = [1, IMAGE_WIDTH, IMAGE_HEIGHT, 3]
-      console.log("Setting input tensor of shape", shape)
-      await redis.call('AI.TENSORSET', inputKey,
-                      'FLOAT', ...shape,
-                      'BLOB', imageBuffer)
-
-      // infer
-      console.log("Running model")
-      await redis.call('AI.MODELRUN', 'mobilenet', 'INPUTS', inputKey, 'OUTPUTS', outputKey)
-
-      // read the output tensor
-      console.log("Reading output tensor")
-      let outputBuffer = await redis.callBuffer('AI.TENSORGET', outputKey, 'BLOB')
-      let encodedOutput = bufferToFloatArray(outputBuffer)
-
-      // decode the classifications
-      console.log("Decoding results")
-      let decodedOutput = encodedOutput.map((score, index) => {
-        return { label: labels[index], score }
-      })
-
-      // report the top result
-      return decodedOutput
-        .sort((a, b) => b.score - a.score)
-        .slice(0, TOP_COUNT)
-        .map(result => { return { filename, label: result.label, score: result.score } })
+      // return the buffer
+      return imageBuffer
     })
   )
 
-  console.table(classifications.flat(1))
-
-  redis.quit()
+  return Buffer.concat(imageBuffers)
 }
 
 function removeAlpha(data) {
@@ -103,12 +131,14 @@ function normalizeRgb(data) {
   return Float32Array.from(data.map(byte => byte / 127.5 - 1))
 }
 
-function bufferToFloatArray(buffer) {
+function tensorToArrayOfFloats(buffer, shape) {
   // Each float is 4-bytes so make a new array, fill it with nothing,
   // and map the nothing to the results of reading the buffer.
-  return new Array(buffer.length / 4)
-    .fill()
-    .map((_, index) => buffer.readFloatLE(4 * index))
+  return new Array(shape[0]).fill().map((_, index0) => {
+    return new Array(shape[1]).fill().map((_, index1) => {
+      return buffer.readFloatLE( shape[1] * index0 * 4 + index1 * 4)
+    })
+  })
 }
 
 main()
