@@ -85,9 +85,9 @@ The CLI is variadic, so you can add multiple images as well:
     └─────────┴─────────────────────┴─────────────────────┘
     img/sample_computer.jpg
 
-And, it will even take a URL to an image, like this handsome fellow here:
+And, it will even take a URL to an image, like this rando I grabbed off the Internet:
 
-![Guy Royse](http://guyroyse.com/guy-royse-papis-global-2018.jpg)
+![Guy Royse](http://guyroyse.com/guy-royse-papis-global-2018.jpg){:height="224px" width="224px"}
 
     $ npm start http://guyroyse.com/guy-royse-papis-global-2018.jpg
 
