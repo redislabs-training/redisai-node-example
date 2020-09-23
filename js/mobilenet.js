@@ -61,23 +61,17 @@ async function main() {
   // read the output tensor
   console.log("Reading output tensor of shape", outputShape)
   let outputBuffer = await redis.callBuffer('AI.TENSORGET', OUTPUT_TENSOR_KEY, 'BLOB')
-  let encodedOutput = tensorToArrayOfFloats(outputBuffer, outputShape)
+  let outputArray = tensorToArrayOfFloats(outputBuffer, outputShape)
 
   // decode the classifications
   console.log("Decoding results")
-  let decodedTopOutput = encodedOutput.map((row, rowIndex) => {
-    return row
-      .map((score, index) => {
-        return { label: labels[index], score }
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, TOP_COUNT)
-      .map(result => { 
-        return { path: imagePaths[rowIndex], label: result.label, score: result.score }
-      })
-  })
+  let topOutput = decodeAndRankOutput(outputArray, labels)
 
-  decodedTopOutput.forEach(row => console.table(row))
+  // report the results
+  topOutput.forEach((row, index) => {
+    console.table(row)
+    console.log(imagePaths[index])
+  })
 
   redis.quit()
 }
@@ -138,6 +132,18 @@ function tensorToArrayOfFloats(buffer, shape) {
     return new Array(shape[1]).fill().map((_, index1) => {
       return buffer.readFloatLE( shape[1] * index0 * 4 + index1 * 4)
     })
+  })
+}
+
+function decodeAndRankOutput(output, labels) {
+  return output.map(row => {
+    return row
+      .map((score, index) => ({ label: labels[index], score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_COUNT)
+      .map(result => { 
+        return { label: result.label, score: result.score }
+      })
   })
 }
 
