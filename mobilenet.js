@@ -145,9 +145,6 @@ function decodeAndRankOutput(output, labels) {
       .map((score, index) => ({ label: labels[index], score }))
       .sort((a, b) => b.score - a.score)
       .slice(0, TOP_COUNT)
-      .map(result => { 
-        return { label: result.label, score: result.score }
-      })
   })
 }
 
