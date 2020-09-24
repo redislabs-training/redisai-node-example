@@ -43,10 +43,11 @@ async function main() {
     'OUTPUTS', MODEL_OUTPUT_NODES_NAME,
     'BLOB', modelBlob)
 
-  // fetch the image data
+  // fetch the image data and write it out (just for fun)
   let imageData = await fetchImageData(imagePaths)
+  await fs.writeFile('img/input.pb', imageData)
 
-  // place normalized image in input tensor
+  // place normalized images in input tensor
   console.log("Setting input tensor of shape", inputShape)
   await redis.call('AI.TENSORSET', INPUT_TENSOR_KEY,
                    'FLOAT', ...inputShape,
