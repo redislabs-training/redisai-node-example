@@ -21,10 +21,10 @@ const TOP_COUNT = 5
 
 async function main() {
 
-  let imagePaths = fetchImagePaths()
-  let labels = await fetchLabels()
+  let [, , ...paths] = Array.from(process.argv)
+  let labels = JSON.parse(await fs.readFile(LABELS_PATH))
 
-  let imageCount = imagePaths.length
+  let imageCount = paths.length
   let labelCount = labels.length
 
   let inputShape = [imageCount, IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_DEPTH]
@@ -34,18 +34,38 @@ async function main() {
   let redis = new Redis()
 
   // read the model
-  let modelBlob = await fetchModel()
+  let blob = await fs.readFile(MODEL_PATH)
 
   // set the model
   console.log("Setting the model to", MODEL_KEY)
   await redis.call('AI.MODELSET', MODEL_KEY, 'TF', 'CPU',
     'INPUTS', MODEL_INPUT_NODES_NAME,
     'OUTPUTS', MODEL_OUTPUT_NODES_NAME,
-    'BLOB', modelBlob)
+    'BLOB', blob)
 
-  // fetch the image data and write it out (just for fun)
-  let imageData = await fetchImageData(imagePaths)
-  await fs.writeFile('img/input.pb', imageData)
+  // fetch the image data
+  let imageBuffers = await Promise.all(
+    paths.map(async path => {
+
+      // load and resize image
+      console.log("Reading and resizing", path)
+      let image = await Jimp.read(path)
+      let resizedImage = image.cover(IMAGE_WIDTH, IMAGE_HEIGHT)
+      let imageBytes = Array.from(resizedImage.bitmap.data)
+
+      // normalize image data
+      console.log("Normalizing image data")
+      let rgbBytes = imageBytes.filter((byte, index) => (index + 1) % 4 !== 0)
+      let rgbFloats = Float32Array.from(rgbBytes.map(byte => byte / 127.5 - 1))
+      let imageBuffer = Buffer.from(rgbFloats.buffer)
+
+      // return the buffer
+      return imageBuffer
+    })
+  )
+
+  // merge the image buffers
+  let imageData = Buffer.concat(imageBuffers)
 
   // place normalized images in input tensor
   console.log("Setting input tensor of shape", inputShape)
@@ -61,91 +81,34 @@ async function main() {
 
   // read the output tensor
   console.log("Reading output tensor of shape", outputShape)
-  let outputBuffer = await redis.callBuffer('AI.TENSORGET', OUTPUT_TENSOR_KEY, 'BLOB')
-  let outputArray = tensorToArrayOfFloats(outputBuffer, outputShape)
+  let buffer = await redis.callBuffer('AI.TENSORGET', OUTPUT_TENSOR_KEY, 'BLOB')
+
+  // turn the tensor into an array
+  let array = new Array(outputShape[0]).fill().map((_, i) => {
+    return new Array(outputShape[1]).fill().map((_, j) => {
+      return buffer.readFloatLE(outputShape[1] * i * 4 + j * 4)
+    })
+  })
 
   // decode and rank the classifications
   console.log("Decoding results")
-  let topOutput = decodeAndRankOutput(outputArray, labels)
-
-  // report the results
-  console.log()
-  topOutput.forEach((row, index) => {
-    console.table(row)
-    console.log(imagePaths[index])
-    console.log()
-  })
-
-  // close up redis
-  redis.quit()
-}
-
-function fetchImagePaths() {
-  let [, , ...paths] = Array.from(process.argv)
-  return paths
-}
-
-async function fetchLabels() {
-  return JSON.parse(await fs.readFile(LABELS_PATH))
-}
-
-async function fetchModel() {
-  return await fs.readFile(MODEL_PATH)
-}
-
-async function fetchImageData(paths) {
-
-  let imageBuffers = await Promise.all(
-    await paths.map(async path => {
-
-      // load and resize image
-      console.log("Reading and resizing", path)
-      let image = await Jimp.read(path)
-      let resizedImage = image.cover(IMAGE_WIDTH, IMAGE_HEIGHT)
-      let imageBytes = Array.from(resizedImage.bitmap.data)
-
-      // normalize image data
-      console.log("Normalizing image data")
-      let imageColorBytes = removeAlpha(imageBytes)
-      let normalizedImageFloats = normalizeRgb(imageColorBytes)
-      let imageBuffer = Buffer.from(normalizedImageFloats.buffer)
-
-      // return the buffer
-      return imageBuffer
-    })
-  )
-
-  return Buffer.concat(imageBuffers)
-}
-
-function removeAlpha(data) {
-  // Image data includes RGB and the alpha channel, giving 4 bytes
-  // per pixel. We only care about the RGB so drop every fourth byte.
-  return data.filter((byte, index) => (index + 1) % 4 !== 0)
-}
-
-function normalizeRgb(data) {
-  // scale the rgb from 0 through 255 to -1.0 throuh +1.0
-  return Float32Array.from(data.map(byte => byte / 127.5 - 1))
-}
-
-function tensorToArrayOfFloats(buffer, shape) {
-  // Each float is 4-bytes so make a new array, fill it with nothing,
-  // and map the nothing to the results of reading the buffer.
-  return new Array(shape[0]).fill().map((_, index0) => {
-    return new Array(shape[1]).fill().map((_, index1) => {
-      return buffer.readFloatLE( shape[1] * index0 * 4 + index1 * 4)
-    })
-  })
-}
-
-function decodeAndRankOutput(output, labels) {
-  return output.map(row => {
+  let results = array.map(row => {
     return row
       .map((score, index) => ({ label: labels[index], score }))
       .sort((a, b) => b.score - a.score)
       .slice(0, TOP_COUNT)
   })
+
+  // report the results
+  console.log()
+  results.forEach((row, index) => {
+    console.table(row)
+    console.log(paths[index])
+    console.log()
+  })
+
+  // close up redis
+  redis.quit()
 }
 
 main()
