@@ -1,7 +1,6 @@
-let fs = require('fs').promises
-
-let Redis = require('ioredis')
-let Jimp = require('jimp')
+const fs = require('fs').promises
+const Redis = require('ioredis')
+const Jimp = require('jimp')
 
 const MODEL_PATH = 'models/mobilenet_v2_1.4_224_frozen.pb'
 const MODEL_INPUT_NODES_NAME = 'input'
