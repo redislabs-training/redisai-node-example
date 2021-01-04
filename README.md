@@ -12,7 +12,7 @@ This tool loads a Mobilenet image classification model into RedisAI, takes a bun
 
 3. Clone this repo.
 
-    $ git clone git@github.com:guyroyse/redisai-node-example.git
+    $ git clone git@github.com:redislabs-training/redisai-node-example.git
 
 4. Install all of the dependencies.
 
